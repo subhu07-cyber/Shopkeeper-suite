@@ -1,0 +1,64 @@
+{
+  "summary": "Full backend + frontend E2E test of The Shopkeeper's Day PWA. Backend: 44/44 pytest cases pass across auth, khata (customers/entries/aging/cap/reminders), notifications, inventory (CRUD/low-stock/sales/stock-in), Gemini bill OCR, suppliers + PO lifecycle, analytics, and customer OTP portal (mocked Twilio), including auth-guard/403 role separation. Frontend: all 12 requested flows verified on desktop (1920x1080) and mobile (390x844) — login, signup, khata add/credit/payment/aging, 1Cr hard block + 80L soft warning, MOCK reminder toast + bell notification, inventory add/edit/low-stock badge/cash sale/credit sale creating ledger entry, real Gemini OCR upload -> confirm -> stock-in (4/4 line items extracted correctly), supplier add + reorder suggestions + PO draft->sent->received (stock incremented), analytics charts with daily/weekly/monthly tabs + top items + aging pie, customer OTP portal with dev_otp toast and read-only khata, Hindi/English + dark/light toggles, and route guards. No blocking bugs found; issues are validation/security hardening and a data-integrity gap.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/inventory/ocr", "issue": "No file-type validation. Uploading a text/plain file ('notes.txt') returns 200 with hallucinated JSON instead of 400/415. Should whitelist image/png|jpeg|webp and cap file size."},
+      {"endpoint": "POST /api/auth/register", "issue": "No input validation: malformed email ('not-an-email') and 1-character password are accepted (200). Use pydantic EmailStr + min_length on password."},
+      {"endpoint": "POST /api/auth/login", "issue": "No brute-force protection — 7 consecutive wrong-password attempts all return 401 with no lockout/429 (auth playbook expects lockout after 5 fails)."},
+      {"endpoint": "POST /api/customer/otp/verify", "issue": "Unlimited OTP verify attempts (12 wrong codes all just 401). A 6-digit OTP with no attempt cap / no per-phone send throttle is brute-forceable."},
+      {"endpoint": "DELETE /api/khata/customers/{cid} and DELETE /api/inventory/products/{pid}", "issue": "Orphan data: deleting a customer removes ledger_entries but NOT the sales docs created by credit entries/sales; deleted products stay in past sales. After deleting all test customers/products, /api/analytics/summary still reports today_sales=8007540 with 8 txns for non-existent customers, inflating dashboard + analytics."},
+      {"endpoint": "CORS middleware (server.py)", "issue": "allow_credentials=True combined with allow_origins=['*'] is an invalid/ignored combination per the CORS spec; set explicit origins from env."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Analytics (desktop)", "issues": ["Y-axis tick label clipped — '₹1,00,00,000' renders as ',00,00,000' (increase YAxis width/left margin)", "With a single bucket the bar spans nearly the whole chart width, looking like a filled block", "Recharts console warning: 'width(-1) and height(-1) of chart should be greater than 0' fires on chart mount (container has no minWidth/minHeight)"]},
+      {"screen": "Analytics (mobile 390px)", "issues": ["Empty state renders an axis-only chart with no 'no data' message", "'TODAY'S SALES: ₹0' label wraps to two lines and collides visually with the period tabs"]},
+      {"screen": "Inventory > Scan Bill (OCR) confirm screen", "issues": ["Qty and unit-price inputs have no column headers/labels — user can't tell which numeric column is qty vs price"]},
+      {"screen": "Customer detail / ledger notes", "issues": ["Credit-sale note shows float qty: 'Sale: QA Prod 846 x1.0' instead of 'x1'"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_edge_cases.py",
+    "/app/backend/tests/make_bill.py",
+    "/app/backend/tests/cleanup_qa_data.py",
+    "/app/backend/tests/cleanup_junk_users.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Validate OCR upload content_type (image/png|jpeg|webp) + max size; reject others with 400/415.",
+    "Add EmailStr + password min_length (>=6) validation to /api/auth/register.",
+    "Add login rate-limit/lockout after 5 failed attempts and cap OTP verify attempts (e.g. 5) + throttle OTP sends per phone.",
+    "Cascade-clean sales/purchase-order references when a customer or product is deleted (or filter analytics to existing customers) so dashboard/analytics totals stay accurate.",
+    "Set explicit CORS origins from env instead of '*' while allow_credentials=True.",
+    "Analytics chart polish: YAxis width for ₹1Cr labels, min height/width on ResponsiveContainer to silence recharts warning, empty-data message.",
+    "Format qty as integer when whole number in ledger note and OCR confirm rows; add qty/price column headers on the OCR confirm table."
+  ],
+  "critical_code_review_comments": [
+    "server.py: /api/inventory/ocr trusts file.content_type for both the temp-file suffix and the Gemini mime type — an attacker-supplied mime lets arbitrary non-image bytes reach the LLM; validate against an allowlist and sniff the magic bytes.",
+    "server.py: aging/list endpoints call compute_aging per customer with a per-customer ledger query (N+1). Fine for MVP scale but will degrade with a few thousand customers — aggregate with a single $group query.",
+    "server.py: all list endpoints use fixed .to_list(2000/5000) with no pagination; add limit/skip params before data grows.",
+    "server.py: create_entry inserts a sales doc for every khata credit entry, so 'today's sales' counts pure ledger credits; document/intend this, and make deletion consistent.",
+    "Tests live under /app/backend/tests, which triggers uvicorn WatchFiles reloads on edit — harmless but consider excluding the tests dir from the reload watch."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_edge_cases.py",
+    "/app/backend/tests/make_bill.py",
+    "/app/backend/tests/cleanup_qa_data.py",
+    "/app/backend/tests/cleanup_junk_users.py"
+  ],
+  "success_rate": {"backend": "100% (44/44 functional); 0/5 hardening probes in test_edge_cases.py pass", "frontend": "100% of requested flows (12/12) pass"},
+  "seed_data_creation": "Created and then deleted: QA customers (QA Cust*), QA products (QA Prod*, Aashirvaad Atta 5kg / Amul Butter 500g / Parle-G Biscuit from OCR stock-in), QA Supplier + PO, TEST_* pytest fixtures, and a QA signup account. cleanup_qa_data.py + cleanup_junk_users.py were run — only ssjrocks6969@gmail.com user, Ramesh Kumar customer and Tata Salt 1kg product remain. NOTE: Tata Salt stock is now 13 (OCR stock-in) and Ramesh Kumar balance ₹2,620 (credit sale of ₹120 added); orphan sales docs from deleted test data still inflate today_sales (~₹80L) — main agent may want to purge db.sales for deleted customers.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Shopkeeper ssjrocks6969@gmail.com / shop123456 (works). Customer OTP: +919876543210 -> dev_otp in response (mock).",
+  "context_for_next_testing_agent": "Reusable suites: /app/backend/tests/backend_test.py (44 functional tests, run with `pytest -n 0 -p no:randomly` because classes share state), /app/backend/tests/test_edge_cases.py (5 hardening probes, all currently failing by design — re-run after validation/rate-limit fixes), /app/backend/tests/make_bill.py (synthetic bill PNG generator for OCR). For UI OCR testing, build the bill image in-browser via canvas.toDataURL and pass the decoded bytes to set_input_files(buffer=...). Sell dialog mode options are labelled 'Cash Sale' / 'Credit Sale'. Gemini OCR responded in ~10-20s and extracted 4/4 line items accurately.",
+  "rca_of_the_issue": "Analytics inflation RCA: POST /api/khata/entries inserts a db.sales doc for every credit entry, but DELETE /api/khata/customers only removes db.customers + db.ledger_entries. Sales rows therefore survive customer deletion and are still summed by /api/analytics/summary and /api/analytics/sales (which filter only by owner_id + date), leaving today_sales=₹80,07,540 for customers that no longer exist. Fix: delete/soft-flag sales on customer delete, or join sales against existing customers in analytics."
+}
