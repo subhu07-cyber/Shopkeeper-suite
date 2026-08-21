@@ -24,6 +24,11 @@ const strings = {
     noProducts: "No products yet.", noSuppliers: "No suppliers yet.", days: "days",
     cashSale: "Cash Sale", creditSale: "Credit Sale", mode: "Mode", customer: "Customer",
     processing: "Reading bill with AI...", suggestedQty: "Suggested",
+    scanBarcode: "Scan Barcode", barcode: "Barcode", newBarcode: "New barcode — add this product",
+    offlineSaved: "Saved offline — will sync when back online", synced: "Offline entries synced",
+    syncFailed: "offline entries were rejected by the server and not saved",
+    pendingSync: "pending sync", offline: "Offline",
+    dailyDigest: "Morning Digest", yesterdaySales: "Yesterday's Sales", newDues: "New Dues", toReorder: "To Reorder",
   },
   hi: {
     dashboard: "डैशबोर्ड", khata: "खाता", inventory: "इन्वेंटरी", suppliers: "सप्लायर",
@@ -48,6 +53,11 @@ const strings = {
     noProducts: "अभी कोई प्रोडक्ट नहीं।", noSuppliers: "अभी कोई सप्लायर नहीं।", days: "दिन",
     cashSale: "नकद बिक्री", creditSale: "उधार बिक्री", mode: "मोड", customer: "ग्राहक",
     processing: "AI से बिल पढ़ा जा रहा है...", suggestedQty: "सुझाव",
+    scanBarcode: "बारकोड स्कैन", barcode: "बारकोड", newBarcode: "नया बारकोड — यह प्रोडक्ट जोड़ें",
+    offlineSaved: "ऑफलाइन सेव हुआ — ऑनलाइन होते ही सिंक होगा", synced: "ऑफलाइन एंट्री सिंक हो गईं",
+    syncFailed: "ऑफलाइन एंट्री सर्वर ने अस्वीकार कीं, सेव नहीं हुईं",
+    pendingSync: "सिंक बाकी", offline: "ऑफलाइन",
+    dailyDigest: "सुबह का सारांश", yesterdaySales: "कल की बिक्री", newDues: "नया उधार", toReorder: "रीऑर्डर करें",
   },
 };
 

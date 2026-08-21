@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, Send, Trash2 } from "lucide-react";
 import dayjs from "dayjs";
-import { api, inr, errMsg, CAP, SOFT_CAP } from "@/lib/api";
+import { api, inr, errMsg, offlinePost, cachedGet, CAP, SOFT_CAP } from "@/lib/api";
 import { useI18n } from "@/context/I18nContext";
 import { AgingChip } from "@/components/AgingChip";
 import { Button } from "@/components/ui/button";
@@ -24,9 +24,12 @@ const EntryForm = ({ type, customerId, onDone }) => {
     e.preventDefault();
     if (blocked) return toast.error(t("capBlocked"));
     try {
-      const { data } = await api.post("/khata/entries", { customer_id: customerId, type, amount: num, note });
-      if (data.soft_warning) toast.warning(t("capWarning"));
-      toast.success(`${inr(num)} ${type === "credit" ? t("creditGiven") : t("paymentReceived")}`);
+      const { data, queued } = await offlinePost("/khata/entries", { customer_id: customerId, type, amount: num, note, client_id: crypto.randomUUID() });
+      if (queued) toast.info(t("offlineSaved"));
+      else {
+        if (data.soft_warning) toast.warning(t("capWarning"));
+        toast.success(`${inr(num)} ${type === "credit" ? t("creditGiven") : t("paymentReceived")}`);
+      }
       setAmount(""); setNote("");
       onDone();
     } catch (err) { toast.error(errMsg(err)); }
@@ -52,7 +55,7 @@ export default function CustomerDetail() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [sending, setSending] = useState(false);
-  const { data: c, refetch } = useQuery({ queryKey: ["customer", id], queryFn: () => api.get(`/khata/customers/${id}`).then((r) => r.data) });
+  const { data: c, refetch } = useQuery({ queryKey: ["customer", id], queryFn: () => cachedGet(`/khata/customers/${id}`) });
 
   const refresh = () => { refetch(); qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["summary"] }); };
 

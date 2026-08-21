@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, ScanLine, Pencil, Trash2, Loader2, ShoppingCart } from "lucide-react";
-import { api, inr, errMsg } from "@/lib/api";
+import { Plus, ScanLine, Pencil, Trash2, Loader2, ShoppingCart, Barcode } from "lucide-react";
+import { api, inr, errMsg, cachedGet, offlinePost } from "@/lib/api";
+import { BarcodeScanner } from "@/components/BarcodeScanner";
 import { useI18n } from "@/context/I18nContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,11 +12,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const emptyForm = { name: "", sku: "", price: "", stock: 0, low_stock_threshold: 5 };
+const emptyForm = { name: "", sku: "", barcode: "", price: "", stock: 0, low_stock_threshold: 5 };
 
 const ProductDialog = ({ open, setOpen, editing, onSaved }) => {
   const { t } = useI18n();
-  const [form, setForm] = useState(editing || emptyForm);
+  const [form, setForm] = useState(editing ? { barcode: "", ...editing } : emptyForm);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const submit = async (e) => {
     e.preventDefault();
@@ -35,6 +36,7 @@ const ProductDialog = ({ open, setOpen, editing, onSaved }) => {
           <div className="space-y-1.5"><Label>{t("name")}</Label><Input data-testid="product-name-input" required value={form.name} onChange={set("name")} className="h-12" /></div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>SKU</Label><Input data-testid="product-sku-input" value={form.sku} onChange={set("sku")} className="h-12" /></div>
+            <div className="space-y-1.5"><Label>{t("barcode")}</Label><Input data-testid="product-barcode-input" value={form.barcode} onChange={set("barcode")} className="h-12" /></div>
             <div className="space-y-1.5"><Label>{t("price")} (₹)</Label><Input data-testid="product-price-input" type="number" min="0" step="0.01" required value={form.price} onChange={set("price")} className="h-12" /></div>
             <div className="space-y-1.5"><Label>{t("stock")}</Label><Input data-testid="product-stock-input" type="number" min="0" value={form.stock} onChange={set("stock")} className="h-12" /></div>
             <div className="space-y-1.5"><Label>{t("lowStockThreshold")}</Label><Input data-testid="product-threshold-input" type="number" min="0" value={form.low_stock_threshold} onChange={set("low_stock_threshold")} className="h-12" /></div>
@@ -51,12 +53,13 @@ const SellDialog = ({ product, setProduct, onSold }) => {
   const [qty, setQty] = useState(1);
   const [mode, setMode] = useState("cash");
   const [customerId, setCustomerId] = useState("");
-  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: () => api.get("/khata/customers").then((r) => r.data) });
+  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: () => cachedGet("/khata/customers") });
   const submit = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/sales", { items: [{ product_id: product.id, qty: Number(qty) }], mode, customer_id: mode === "credit" ? customerId : null });
-      toast.success(`${t("sell")}: ${product.name} x${qty}`);
+      const { queued } = await offlinePost("/sales", { items: [{ product_id: product.id, qty: Number(qty) }], mode, customer_id: mode === "credit" ? customerId : null, client_id: crypto.randomUUID() });
+      if (queued) toast.info(t("offlineSaved"));
+      else toast.success(`${t("sell")}: ${product.name} x${qty}`);
       setProduct(null); onSold();
     } catch (err) { toast.error(errMsg(err)); }
   };
@@ -173,7 +176,15 @@ export default function Inventory() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [selling, setSelling] = useState(null);
-  const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: () => api.get("/inventory/products").then((r) => r.data) });
+  const [scanOpen, setScanOpen] = useState(false);
+  const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: () => cachedGet("/inventory/products") });
+
+  const onScanned = (code) => {
+    setScanOpen(false);
+    const p = products.find((x) => (x.barcode && x.barcode === code) || (x.sku && x.sku === code));
+    if (p) { toast.success(`${p.name}`); setSelling(p); }
+    else { toast.info(`${t("newBarcode")}: ${code}`); setEditing({ ...emptyForm, barcode: code }); setDialogOpen(true); }
+  };
 
   const refresh = () => { qc.invalidateQueries({ queryKey: ["products"] }); qc.invalidateQueries({ queryKey: ["summary"] }); };
   const remove = async (p) => { if (window.confirm(`Delete ${p.name}?`)) { await api.delete(`/inventory/products/${p.id}`); refresh(); } };
@@ -182,7 +193,10 @@ export default function Inventory() {
     <div data-testid="inventory-page" className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h1 className="font-heading text-3xl font-bold tracking-tight">{t("inventory")}</h1>
-        <Button data-testid="add-product-btn" onClick={() => { setEditing(null); setDialogOpen(true); }} className="h-12 gap-2 active:scale-95 transition-transform duration-100"><Plus size={18} />{t("addProduct")}</Button>
+        <div className="flex gap-2">
+          <Button data-testid="scan-barcode-btn" variant="outline" onClick={() => setScanOpen(true)} className="h-12 gap-2 active:scale-95 transition-transform duration-100"><Barcode size={18} /><span className="hidden sm:inline">{t("scanBarcode")}</span></Button>
+          <Button data-testid="add-product-btn" onClick={() => { setEditing(null); setDialogOpen(true); }} className="h-12 gap-2 active:scale-95 transition-transform duration-100"><Plus size={18} />{t("addProduct")}</Button>
+        </div>
       </div>
 
       <Tabs defaultValue="products">
@@ -215,8 +229,9 @@ export default function Inventory() {
         <TabsContent value="ocr"><OcrFlow onStocked={refresh} /></TabsContent>
       </Tabs>
 
-      {dialogOpen && <ProductDialog key={editing?.id || "new"} open={dialogOpen} setOpen={setDialogOpen} editing={editing} onSaved={refresh} />}
+      {dialogOpen && <ProductDialog key={editing?.id || editing?.barcode || "new"} open={dialogOpen} setOpen={setDialogOpen} editing={editing} onSaved={refresh} />}
       <SellDialog key={selling?.id || "sell"} product={selling} setProduct={setSelling} onSold={refresh} />
+      <BarcodeScanner open={scanOpen} onClose={() => setScanOpen(false)} onDetected={onScanned} />
     </div>
   );
 }

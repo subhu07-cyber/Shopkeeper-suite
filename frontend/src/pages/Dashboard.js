@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { IndianRupee, AlertTriangle, PackageOpen, Wallet } from "lucide-react";
-import { api, inr } from "@/lib/api";
+import { IndianRupee, AlertTriangle, PackageOpen, Wallet, Sunrise } from "lucide-react";
+import { inr, cachedGet } from "@/lib/api";
 import { useI18n } from "@/context/I18nContext";
 import { AgingChip } from "@/components/AgingChip";
 
@@ -17,8 +17,9 @@ const StatCard = ({ icon: Icon, label, value, accent, testId, to }) => (
 
 export default function Dashboard() {
   const { t } = useI18n();
-  const { data: summary } = useQuery({ queryKey: ["summary"], queryFn: () => api.get("/analytics/summary").then((r) => r.data) });
-  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: () => api.get("/khata/customers").then((r) => r.data) });
+  const { data: summary } = useQuery({ queryKey: ["summary"], queryFn: () => cachedGet("/analytics/summary") });
+  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: () => cachedGet("/khata/customers") });
+  const { data: digest } = useQuery({ queryKey: ["digest"], queryFn: () => cachedGet("/analytics/digest") });
 
   const overdueCustomers = customers.filter((c) => c.overdue).sort((a, b) => b.balance - a.balance);
   const b = summary?.aging_buckets || { b0_30: 0, b31_60: 0, b60_plus: 0 };
@@ -27,6 +28,29 @@ export default function Dashboard() {
   return (
     <div data-testid="dashboard-page" className="space-y-8">
       <h1 className="font-heading text-3xl font-bold tracking-tight">{t("dashboard")}</h1>
+
+      {digest && (
+        <div data-testid="daily-digest-card" className="border rounded-md bg-card p-5">
+          <h2 className="text-xs tracking-[0.05em] uppercase font-semibold text-muted-foreground flex items-center gap-2 mb-4"><Sunrise size={16} className="text-amber-500" /> {t("dailyDigest")}</h2>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground">{t("yesterdaySales")}</p>
+              <p data-testid="digest-yesterday-sales" className="font-heading text-xl font-bold">{inr(digest.yesterday_sales)}</p>
+              <p className="text-xs text-muted-foreground">{digest.yesterday_txns} txns</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{t("newDues")}</p>
+              <p data-testid="digest-new-dues" className="font-heading text-xl font-bold">{inr(digest.new_dues)}</p>
+              <p className="text-xs text-muted-foreground">{digest.new_dues_count} {t("customers").toLowerCase()}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{t("toReorder")}</p>
+              <p data-testid="digest-reorder-count" className="font-heading text-xl font-bold">{digest.reorder_count}</p>
+              <p className="text-xs text-muted-foreground truncate">{digest.reorder_items.join(", ") || "—"}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard testId="stat-today-sales" to="/analytics" icon={IndianRupee} label={t("todaySales")} value={inr(summary?.today_sales)} accent="text-emerald-500" />

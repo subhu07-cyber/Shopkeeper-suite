@@ -1,0 +1,44 @@
+{
+  "summary": "Frontend-only retest (iteration 3) of the 5 fixes from iteration 2 on The Shopkeeper's Day PWA, using Playwright against the public preview URL. ALL 5 previously reported bugs are VERIFIED FIXED: (1) offline page reload keeps the session and renders dashboard/khata/customer-detail from IndexedDB cache with sk_token intact; (2) no duplicate sync - one offline credit of Rs150 + two rapid 'online' events produced exactly ONE ledger entry (balance 2000 -> 2150, 3 transaction rows); (3) offline customer detail and the SellDialog credit-mode customer dropdown both render from cache (dropdown showed 'Ramesh Kumar' while offline, inventory rendered 2 cached products); (4) server-rejected queued item now shows the error toast '1 offline entries were rejected by the server and not saved' instead of a success toast, and the queue drains to 0; (5) digest new_dues_count = 1 distinct customer (Rs2500) and no Radix aria-describedby/DialogTitle console warnings on the Add-Customer or Barcode-Scan dialogs. Seed data verified via API: Ramesh Kumar +919876543210, balance Rs2000 (2500 credit yesterday - 500 payment), digest {yesterday_sales:1240, new_dues:2500, new_dues_count:1, reorder_count:0}. Light regression passed: online credit entry (2150 -> 2249), online cash sell (toast + stock decrement), dashboard digest card values, barcode scanner dialog opens with live camera preview. All test data was cleaned up and Ramesh Kumar's ledger restored to exactly 2 entries / Rs2000 balance; Parle-G stock restored (+1).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/khata/entries + /api/analytics/summary",
+        "issue": "A credit ledger entry also inserts a companion doc into the `sales` collection (mode='credit', items=[]). Deleting/cleaning a ledger entry leaves an orphan sales doc that keeps inflating Today's Sales. Observed an orphan credit sale of Rs150 at 22:54 with no matching ledger entry (pre-existing, from an earlier cleanup). Consider linking the sale to the entry id and cascading, or deriving credit revenue from ledger_entries instead of duplicating it."
+      },
+      {
+        "endpoint": "/api/khata/entries",
+        "issue": "The companion sales doc created by create_entry does not carry client_id (only ledger_entries does). Idempotency currently works because the ledger dedupe short-circuits before the sale insert, but the sales doc would be untraceable if that order ever changes."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard - Morning Digest card",
+        "issues": ["Label pluralisation: renders '1 customers' / '1 txns'. Use singular form when count === 1."]
+      }
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/backend/tests/test_new_features.py"],
+  "action_items": [
+    "OPTIONAL (minor): pluralise digest sub-labels ('1 customer' / '1 txn').",
+    "OPTIONAL (minor): avoid duplicating credit ledger entries into the `sales` collection, or cascade/link them so cleanup cannot leave orphan revenue rows."
+  ],
+  "critical_code_review_comments": [
+    "offline.js flushQueue: module-level `flushing` guard + sequential drain verified correct; `else break` on network error correctly stops the drain and preserves ordering.",
+    "AuthContext: token now cleared only on 401/403 and user hydrated from cached 'me' - verified. Note: if the cache is empty (first load on a new device while offline) the user still lands on the login screen; acceptable but worth a friendly offline message instead of the bare login form.",
+    "SyncIndicator useEffect depends on [qc, t]; toggling the language re-registers listeners and re-invokes onOnline. Harmless now thanks to the flushing guard, but the effect could be split to avoid needless flush attempts."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not retested this iteration (per request)", "frontend": "100% (5/5 fix verifications + 4/4 regression checks passed)"},
+  "seed_data_creation": "No permanent data created. Temporary: 1 offline credit Rs150 (TEST_offline_dup), 1 online credit Rs99 (TEST_online_credit), 1 cash sale Parle-G x1, 1 intentionally-invalid queued entry (TEST_bogus_id_404, rejected by server). All removed; Ramesh Kumar restored to 2 entries / Rs2000 and Parle-G stock restored.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Shopkeeper ssjrocks6969@gmail.com / shop123456 (from /app/memory/test_credentials.md) - works, no lockout hit (1 login per run).",
+  "context_for_next_testing_agent": "Offline behaviours are testable with page.context.set_offline(True) and page.reload(); the Dexie DB is 'shopkeeper_offline' with object stores 'queue' and 'cache' - you can inspect/inject queue rows via page.evaluate + indexedDB to force sync-failure paths. Customer id for Ramesh Kumar: 8a1b010b-ff81-41dd-993c-6a1ff25a0b7c. Remember credit ledger entries also write a doc into the `sales` collection, so cleanup must delete both. Untested this iteration: real barcode decode (camera preview only), Gemini bill OCR upload, customer OTP portal, suppliers/analytics pages.",
+  "rca_of_the_issue": "N/A - all iteration-2 defects reproduced as fixed. Duplicate-sync fix confirmed working through both layers: the client-side in-flight guard prevents the second 'online' handler from re-reading the queue, and the server-side client_id idempotency is the backstop."
+}

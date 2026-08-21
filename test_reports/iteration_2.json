@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 2 testing of the 3 new features (barcode scan, offline sync, daily digest) + light regression. Backend: 11/11 pytest tests pass (new /app/backend/tests/test_new_features.py) covering /api/analytics/digest shape+auth+seeded values+reorder consistency, product barcode create/update/persist/optional, and khata customer+credit-entry regression. Frontend: login, Morning Digest card, barcode scanner dialog, product barcode input (add + edit prefill + persist), online sell dialog, offline queue -> auto-sync all verified working. ONE CRITICAL offline bug found: reloading any page while offline logs the user out and wipes the auth token, breaking the whole offline/PWA story (pending queued entries then cannot sync). One medium concurrency bug: flushQueue has no re-entrancy guard -> duplicate ledger entries when the 'online' event fires more than once (reproduced: single offline credit of Rs150 became 2 entries, balance Rs300).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/analytics/digest", "issue": "new_dues_count counts credit ledger ENTRIES, but the dashboard renders it as 'N customers'. Either count distinct customer_ids in the backend or change the UI label."},
+      {"endpoint": "seed data", "issue": "Test data referenced in the request is missing: customers collection was EMPTY (no 'Ramesh Kumar +919876543210'), so digest new_dues is always Rs0 and khata flows have nothing to open. 6 orphan notifications reference deleted customers. Re-seed the demo customer if it is expected."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AuthContext (bootstrap /auth/me)", "issue": "CRITICAL: .catch(() => localStorage.removeItem('sk_token')) removes the token on ANY error including network failure. Reproduced: log in, go offline, reload -> token cleared, login screen shown, all offline pages inaccessible and the pending IndexedDB queue can never flush (verified queue item stayed and API cleanup call returned 401). Fix: only clear the token on e.response?.status === 401/403; on network error keep the token and hydrate the user from a cached profile.", "selector": "[data-testid=\"login-email-input\"] shown after offline reload", "priority": "CRITICAL"},
+      {"component": "lib/offline.js flushQueue", "issue": "No re-entrancy/locking or idempotency key. Two concurrent onOnline invocations (browser 'online' event firing twice / network flapping) each read the same queue rows and POST them before the delete -> duplicate ledger entries. Reproduced: one offline credit of Rs150 created 2 entries (balance Rs300). Fix: module-level in-flight flag (or Dexie transaction claiming rows) + client-generated idempotency id honoured by POST /api/khata/entries.", "selector": "[data-testid=\"sync-indicator\"]", "priority": "HIGH"},
+      {"component": "lib/offline.js flushQueue", "issue": "Any server-rejected queued item is silently deleted (e.response -> delete + counted as 'synced'). A validation/404 failure silently loses the shopkeeper's offline entry and even shows the 'synced' success toast. Should surface failed items to the user instead of dropping them.", "selector": "n/a", "priority": "MEDIUM"},
+      {"component": "CustomerDetail / Inventory SellDialog", "issue": "CustomerDetail uses api.get('/khata/customers/{id}') and SellDialog uses api.get('/khata/customers') (not cachedGet), so opening a customer detail page or selling on credit while offline shows no data / empty customer dropdown even though the khata list renders from cache.", "selector": "[data-testid=\"customer-detail-page\"], [data-testid=\"sell-customer-select\"]", "priority": "MEDIUM"},
+      {"component": "Dialogs (product / scanner / sell)", "issue": "Radix a11y console warning on every dialog: 'Missing Description or aria-describedby for DialogContent'. Add DialogDescription.", "selector": "[data-testid=\"barcode-scanner-dialog\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Offline khata entry -> auto sync", "issue": "WORKS when the SPA is not reloaded: toast 'Saved offline', sync-indicator shows 'Offline · 1', on reconnect entry POSTs to backend (verified via API, balance updated) and indicator disappears with empty queue. Only breaks in combination with the offline-reload logout bug above.", "affected_selectors": ["[data-testid=\"credit-submit-btn\"]", "[data-testid=\"sync-indicator\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Dashboard Morning Digest", "issues": ["Reads correctly (Rs1,240 / 1 txns, new dues Rs0, reorder 0) and renders offline from IndexedDB cache; no visual defects found. 'To Reorder' subtitle shows an em-dash when empty which is fine."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "action_items": [
+    "CRITICAL: AuthContext must not delete sk_token on network errors (offline reload = permanent logout + unsyncable queue). Clear only on 401/403 and cache the user profile for offline hydration.",
+    "HIGH: Add an in-flight guard/transactional claim to flushQueue and an idempotency key on /api/khata/entries + /api/inventory/sales to prevent duplicate offline entries (reproduced duplicate Rs150 credit).",
+    "MEDIUM: Do not silently delete server-rejected queue items; surface them to the user.",
+    "MEDIUM: Switch CustomerDetail and SellDialog customer fetches to cachedGet so offline detail/credit-sale works.",
+    "LOW: fix digest 'N customers' label vs entry count; add DialogDescription to dialogs."
+  ],
+  "critical_code_review_comments": [
+    "AuthContext.js: `.catch(() => localStorage.removeItem('sk_token'))` conflates network failure with invalid token — root cause of the offline logout.",
+    "offline.js flushQueue: `for (const it of items) { await api.post(...) }` with no lock is not safe against concurrent 'online' handlers; also `if (e.response) delete` drops user data.",
+    "Layout.js SyncIndicator calls onOnline() on mount when navigator.onLine, which combined with the 'online' listener is a second path into flushQueue.",
+    "server.py digest uses string comparison on ISO created_at — fine only because all writes use timezone-aware now_iso(); any naive timestamp write would silently break the range filter."
+  ],
+  "updated_files": ["/app/backend/tests/test_new_features.py", "/app/test_reports/iteration_2.json"],
+  "success_rate": {"backend": "100%", "frontend": "80%"},
+  "seed_data_creation": "Created and deleted TEST_ products (TEST_Barcode Item, TEST_NoBarcode, TEST_UI Barcode Prod) and TEST_ customers (TEST_Offline Cust, TEST_Offline Ram, TEST_Sync Cust, TEST_Dup Check). All removed; Parle-G stock restored to 50 and test-created sales/ledger entries deleted. DB now: 2 products, 1 seeded yesterday sale (Rs1240), 0 customers.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "ssjrocks6969@gmail.com / shop123456 (worked; no lockout triggered)",
+  "context_for_next_testing_agent": "Backend digest + barcode fully covered by /app/backend/tests/test_new_features.py (run with `cd /app/backend && python -m pytest tests/test_new_features.py`). Verified working in UI: digest card, scan-barcode-btn dialog (fake camera, no error banner), product-barcode-input add/edit/persist, online sell (stock decrement), offline queue + auto-sync, offline cached reads for khata list, inventory list and dashboard digest via SPA navigation (needs ~5s wait; a 3s wait was flaky once). Retest after fix: (1) offline page RELOAD must keep session, (2) fire 'online' twice and confirm only one ledger entry is created, (3) customer detail + credit sell dropdown offline. Note: khata customers collection is empty by default — create a TEST_ customer first.",
+  "rca_of_the_issue": "Offline logout: AuthProvider's mount effect calls GET /api/auth/me and its catch-all handler deletes sk_token; while offline axios rejects with no e.response, so a benign network error is treated as an invalid session. Duplicate sync: SyncIndicator invokes flushQueue both from the 'online' listener and from its mount effect, and flushQueue has no concurrency guard, so overlapping runs POST the same Dexie queue row twice before deleting it."
+}

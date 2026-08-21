@@ -141,11 +141,13 @@ class EntryIn(BaseModel):
     type: str  # credit | payment
     amount: float
     note: str = ""
+    client_id: Optional[str] = None
 
 
 class ProductIn(BaseModel):
     name: str
     sku: str = ""
+    barcode: str = ""
     price: float
     stock: float = 0
     low_stock_threshold: float = 5
@@ -160,6 +162,7 @@ class SaleIn(BaseModel):
     items: List[SaleItem]
     customer_id: Optional[str] = None
     mode: str = "cash"  # cash | credit
+    client_id: Optional[str] = None
 
 
 class StockInItem(BaseModel):
@@ -373,11 +376,15 @@ async def create_entry(body: EntryIn, user=Depends(get_shopkeeper)):
         raise HTTPException(400, "Amount must be positive")
     if body.amount > CAP:
         raise HTTPException(400, f"Transaction blocked: amount exceeds \u20b91,00,00,000 cap")
+    if body.client_id:
+        existing = await db.ledger_entries.find_one({"client_id": body.client_id, "owner_id": user["id"]}, {"_id": 0})
+        if existing:
+            return {"entry": existing, "soft_warning": False, "duplicate": True}
     cust = await db.customers.find_one({"id": body.customer_id, "owner_id": user["id"]}, {"_id": 0})
     if not cust:
         raise HTTPException(404, "Customer not found")
     entry = {"id": str(uuid.uuid4()), "owner_id": user["id"], "customer_id": body.customer_id,
-             "type": body.type, "amount": body.amount, "note": body.note, "created_at": now_iso()}
+             "type": body.type, "amount": body.amount, "note": body.note, "client_id": body.client_id, "created_at": now_iso()}
     await db.ledger_entries.insert_one(dict(entry))
     if body.type == "credit":
         await db.sales.insert_one({"id": str(uuid.uuid4()), "owner_id": user["id"], "customer_id": body.customer_id,
@@ -543,6 +550,10 @@ async def list_bills(user=Depends(get_shopkeeper)):
 async def record_sale(body: SaleIn, user=Depends(get_shopkeeper)):
     if body.mode == "credit" and not body.customer_id:
         raise HTTPException(400, "customer_id required for credit sale")
+    if body.client_id:
+        existing = await db.sales.find_one({"client_id": body.client_id, "owner_id": user["id"]}, {"_id": 0})
+        if existing:
+            return {"sale": existing, "soft_warning": False, "duplicate": True}
     amount = 0
     items = []
     for it in body.items:
@@ -558,7 +569,7 @@ async def record_sale(body: SaleIn, user=Depends(get_shopkeeper)):
     for it in items:
         await db.products.update_one({"id": it["product_id"]}, {"$inc": {"stock": -it["qty"]}})
     sale = {"id": str(uuid.uuid4()), "owner_id": user["id"], "customer_id": body.customer_id,
-            "mode": body.mode, "amount": round(amount, 2), "items": items, "created_at": now_iso()}
+            "mode": body.mode, "amount": round(amount, 2), "items": items, "client_id": body.client_id, "created_at": now_iso()}
     await db.sales.insert_one(dict(sale))
     if body.mode == "credit":
         names = ", ".join(f"{i['name']} x{i['qty']:g}" for i in items)
@@ -668,6 +679,19 @@ async def analytics_sales(period: str = "daily", user=Depends(get_shopkeeper)):
             key = d.strftime("%d %b")
         buckets[key] = buckets.get(key, 0) + s["amount"]
     return [{"label": k, "amount": round(v, 2)} for k, v in buckets.items()]
+
+
+@api.get("/analytics/digest")
+async def daily_digest(user=Depends(get_shopkeeper)):
+    today0 = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    yest0 = (today0 - timedelta(days=1)).isoformat()
+    sales = await db.sales.find({"owner_id": user["id"], "created_at": {"$gte": yest0, "$lt": today0.isoformat()}}, {"_id": 0}).to_list(5000)
+    entries = await db.ledger_entries.find({"owner_id": user["id"], "type": "credit", "created_at": {"$gte": yest0, "$lt": today0.isoformat()}}, {"_id": 0}).to_list(5000)
+    prods = await db.products.find({"owner_id": user["id"]}, {"_id": 0}).to_list(2000)
+    low = [p["name"] for p in prods if p["stock"] <= p.get("low_stock_threshold", 5)]
+    return {"yesterday_sales": round(sum(s["amount"] for s in sales), 2), "yesterday_txns": len(sales),
+            "new_dues": round(sum(e["amount"] for e in entries), 2), "new_dues_count": len({e["customer_id"] for e in entries}),
+            "reorder_count": len(low), "reorder_items": low[:5]}
 
 
 @api.get("/analytics/top-items")

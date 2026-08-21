@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LayoutDashboard, BookOpen, Package, Truck, BarChart3, Bell, Sun, Moon, Languages, LogOut, Store } from "lucide-react";
+import { toast } from "sonner";
+import { LayoutDashboard, BookOpen, Package, Truck, BarChart3, Bell, Sun, Moon, Languages, LogOut, Store, WifiOff, CloudUpload } from "lucide-react";
 import { useTheme } from "next-themes";
 import { api } from "@/lib/api";
+import { flushQueue, pendingCount } from "@/lib/offline";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -16,6 +18,46 @@ const navItems = [
   { to: "/suppliers", key: "suppliers", icon: Truck },
   { to: "/analytics", key: "analytics", icon: BarChart3 },
 ];
+
+const SyncIndicator = () => {
+  const { t } = useI18n();
+  const qc = useQueryClient();
+  const [online, setOnline] = useState(navigator.onLine);
+  const [pending, setPending] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => pendingCount().then(setPending).catch(() => {});
+    const onOnline = async () => {
+      setOnline(true);
+      const { synced, failed } = await flushQueue(api).catch(() => ({ synced: 0, failed: 0 }));
+      if (synced > 0) {
+        toast.success(t("synced"));
+        qc.invalidateQueries();
+      }
+      if (failed > 0) toast.error(`${failed} ${t("syncFailed")}`);
+      refresh();
+    };
+    const onOffline = () => setOnline(false);
+    refresh();
+    if (navigator.onLine) onOnline();
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("offline-queue-changed", refresh);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("offline-queue-changed", refresh);
+    };
+  }, [qc, t]);
+
+  if (online && pending === 0) return null;
+  return (
+    <span data-testid="sync-indicator" className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold ${online ? "bg-blue-500/15 text-blue-600 dark:text-blue-400" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}>
+      {online ? <CloudUpload size={14} /> : <WifiOff size={14} />}
+      {online ? `${pending} ${t("pendingSync")}` : t("offline")}{!online && pending > 0 ? ` · ${pending}` : ""}
+    </span>
+  );
+};
 
 const NotificationBell = () => {
   const { t } = useI18n();
@@ -90,6 +132,7 @@ export default function Layout({ children }) {
         </div>
         <div className="hidden md:block" />
         <div className="flex items-center gap-1">
+          <SyncIndicator />
           <button data-testid="lang-toggle" onClick={() => setLang(lang === "en" ? "hi" : "en")}
             className="flex items-center gap-1.5 px-3 py-2 rounded-md hover:bg-accent text-sm font-semibold active:scale-95 transition-transform duration-100">
             <Languages size={18} /> {lang === "en" ? "हिं" : "EN"}

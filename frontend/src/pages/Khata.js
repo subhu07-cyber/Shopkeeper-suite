@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, Search, ChevronRight } from "lucide-react";
-import { api, inr, errMsg } from "@/lib/api";
+import { api, inr, errMsg, cachedGet } from "@/lib/api";
 import { useI18n } from "@/context/I18nContext";
 import { AgingChip } from "@/components/AgingChip";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ export default function Khata() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", phone: "", credit_threshold: 10000 });
-  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: () => api.get("/khata/customers").then((r) => r.data) });
+  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: () => cachedGet("/khata/customers") });
 
   const filtered = customers.filter((c) => (c.name + c.phone).toLowerCase().includes(q.toLowerCase()));
 
